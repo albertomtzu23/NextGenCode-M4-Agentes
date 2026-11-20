@@ -189,6 +189,24 @@ def _log_run(  # pylint: disable=too-many-arguments
     )
 
 
+def _mask_request(request):
+    """Enmascara la PII de la pregunta y del historial antes de usarlos.
+
+    :param request: Petición validada con ``question`` e ``history``
+    :type request: pydantic.BaseModel
+    :return: Pregunta enmascarada, historial enmascarado como lista de
+        ``{"role", "content"}`` y conteo de tipos de PII encontrados
+    :rtype: tuple[str, list[dict], collections.Counter]
+    """
+    question, found = mask_pii(request.question)
+    history = []
+    for message in request.history:
+        content, history_found = mask_pii(message.content)
+        found += history_found
+        history.append({"role": message.role, "content": content})
+    return question, history, found
+
+
 def _log_pii(logger, request_id, client, found, answer_found):
     """Registra en la auditoría los tipos de PII enmascarados, sin valores.
 
@@ -317,12 +335,7 @@ def create_app(  # pylint: disable=too-many-arguments
             prices=prices, history_window=config.history_window,
             tracer=observability.tracer, request_id=request_id, client=client,
         )
-        question, found = mask_pii(request.question)
-        history = []
-        for message in request.history:
-            content, history_found = mask_pii(message.content)
-            found += history_found
-            history.append({"role": message.role, "content": content})
+        question, history, found = _mask_request(request)
         result = agent.run(question, history)
         result.answer, answer_found = mask_pii(result.answer)
         _log_pii(observability.logger, request_id, client, found, answer_found)

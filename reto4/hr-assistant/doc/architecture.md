@@ -11,6 +11,10 @@ minuto. Con `ENVIRONMENT=production` el producto se niega a arrancar si la confi
 compliance. Se empaqueta en un contenedor, el CI de GitHub Actions lo prueba por etapas y Render lo publica solo
 si el CI pasa. La publicación empieza con la aprobación de una persona y termina con la prueba de humo.
 
+También en la sesión 4, por decisión de la persona, `main.py` enmascara la PII (email, CURP, RFC, tarjeta, NSS y
+teléfono) de la pregunta y el historial antes de llamar al agente, y la de la respuesta antes de devolverla
+(ADR 0012).
+
 ```mermaid
 flowchart LR
     U[Personal de RH] --> W[index.html<br/>clave en sessionStorage<br/>historial, request_id]
@@ -18,7 +22,8 @@ flowchart LR
     M --> K[auth.py<br/>require_client<br/>compare_digest, 401]
     K --> RL[ratelimit.py<br/>ventana de 60 s por cliente<br/>429 + Retry-After]
     RL --> R[router.py<br/>MODEL_SMALL o MODEL_LARGE]
-    R --> A[agent.py<br/>ventana HISTORY_WINDOW<br/>bucle AGENT_MAX_STEPS]
+    R --> PI[pii.py<br/>mask_pii pregunta e historial<br/>marca tipo oculto]
+    PI --> A[agent.py<br/>ventana HISTORY_WINDOW<br/>bucle AGENT_MAX_STEPS]
     A -- "complete(messages)" --> L[llm.py<br/>interfaz del modelo]
     L --> F[FakeModel<br/>MODEL_PROVIDER=fake]
     L --> G[GatewayModel<br/>MODEL_PROVIDER=gateway]
@@ -27,7 +32,9 @@ flowchart LR
     D --> J[(data/employees.json)]
     A --> P[pricing.py<br/>costo por llamada]
     P --> PJ[(data/model_prices.json)]
-    M --> O[observability.py<br/>reloj, log JSON con client,<br/>Metrics, tracer]
+    A -- "answer" --> PO[pii.py<br/>mask_pii respuesta]
+    PO --> M
+    M --> O[observability.py<br/>reloj, log JSON con client,<br/>audit pii_masked solo conteos,<br/>Metrics, tracer]
     O -. "LANGSMITH_TRACING=true" .-> LS[(LangSmith)]
     C[config.py<br/>load_config, API_KEYS] --> CP[compliance.py<br/>ENVIRONMENT=production]
     CP -- "ConfigError: no arranca" --> M
@@ -41,6 +48,9 @@ flowchart LR
     end
 ```
 
+`pii.py` aparece dos veces en el diagrama porque `main.py` lo llama dos veces por petición: antes del agente y
+después. El enrutador recibe la pregunta original, que no sale del proceso.
+
 ## Componentes
 
 - `config.py`: configuración validada al arrancar; `ENVIRONMENT`, `API_KEYS` (sin `repr`) y
@@ -52,10 +62,14 @@ flowchart LR
 - `llm.py`: interfaz `complete(messages)`, `FakeModel`, `GatewayModel` y `build_models`.
 - `router.py`: regla que elige el modelo por pregunta y devuelve el motivo.
 - `pricing.py`: tabla de precios en USD por millón de tokens y costo por llamada.
+- `pii.py`: `mask_pii(text)` reemplaza email, CURP, RFC, tarjeta, NSS y teléfono por `[<tipo> oculto]` con
+  expresiones regulares en orden fijo (`PII_PATTERNS`) y devuelve los conteos por tipo; no enmascara la salida de
+  las herramientas.
 - `agent.py`: ventana de historial, bucle con tope y protocolo JSON; pasa `client` a las trazas.
 - `observability.py`: reloj inyectable, log JSON por evento, métricas del proceso y tracer opcional.
 - `main.py`: rutas `GET /`, `GET /health`, `POST /ask` y `GET /metrics` (estas dos con clave);
-  `create_app()` recibe sus dependencias.
+  `create_app()` recibe sus dependencias; en `/ask` enmascara entrada y respuesta con `pii.py` y `_log_pii` emite
+  `audit` con `action: "pii_masked"` y solo conteos.
 - `static/index.html`: interfaz web; campo de clave tipo contraseña, pinta con `textContent`.
 - Fuera de `app/`: `Dockerfile` (`python:3.12-slim`, usuario no root), `.dockerignore`,
   `.github/workflows/ci.yml`, `render.yaml` y `scripts/smoke.py`. `render.yaml` y `ci.yml` deben quedar en la raíz
@@ -68,6 +82,7 @@ flowchart LR
 - [0003 Bucle con tope y protocolo JSON](adr/0003-bounded-agent-loop.md)
 - [0004 Configuración validada al arrancar e inyección de dependencias](adr/0004-fail-fast-config.md)
 - [0005 Id por petición, log JSON y métricas por proceso](adr/0005-request-id-json-logs-metrics.md)
+  (actualizado por 0012: `audit` admite `action: "pii_masked"`)
 - [0006 Modelo real a través de Cloudflare AI Gateway](adr/0006-gateway-model-provider.md)
   (reemplaza la restricción de 0004 que solo admitía `fake`)
 - [0007 Palancas de costo medibles](adr/0007-cost-levers.md)
@@ -77,3 +92,5 @@ flowchart LR
 - [0010 Límite de peticiones por cliente en memoria del proceso](adr/0010-in-process-rate-limit.md)
   (excepción acotada a 0001)
 - [0011 Compliance como código al arrancar y publicación solo con CI verde](adr/0011-compliance-as-code-and-gated-deploy.md)
+- [0012 Enmascarado de PII en la pregunta, el historial y la respuesta](adr/0012-pii-masking.md)
+  (amplía el evento `audit` de 0005)

@@ -94,6 +94,22 @@ Errores:
 Los eventos `request`, `audit` y `agent_run` del log, y los metadatos de las trazas, llevan el nombre del cliente
 (`client`). La clave nunca se escribe en el log, en la traza ni en un mensaje de error.
 
+## Enmascarado de PII
+
+En `POST /ask` se reemplazan por `[<tipo> oculto]` (por ejemplo, `[email oculto]`) seis tipos de dato
+personal: `email`, `curp`, `rfc`, `card` (tarjeta), `nss` y `phone` (teléfono).
+
+- La pregunta y el historial se enmascaran antes de llegar al agente, así que no llegan al modelo ni a las
+  trazas.
+- La respuesta se enmascara antes de devolverla.
+- La salida de las herramientas no se enmascara.
+
+Si hubo alguna coincidencia, el log emite un evento `audit` con `action: "pii_masked"` y los conteos por tipo en
+`input` (pregunta e historial) y `output` (respuesta), nunca los valores. Si no hubo ninguna, no se emite.
+
+Falsos positivos conocidos: cualquier número de 10 dígitos se toma como teléfono y uno de 11 como NSS. Los
+detalles y las alternativas están en el ADR [`doc/adr/0012-pii-masking.md`](doc/adr/0012-pii-masking.md).
+
 ## Producción y compliance
 
 Con `ENVIRONMENT=production` el producto se niega a arrancar si:

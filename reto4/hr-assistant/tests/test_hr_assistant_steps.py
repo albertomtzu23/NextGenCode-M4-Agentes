@@ -710,3 +710,74 @@ def startup_succeeds(context, path, status):
     """Revisa que el arranque funcione y la ruta pública responda."""
     assert context["error"] is None
     assert context["client"].get(path).status_code == int(status)
+
+
+# --- Sesión 4: enmascarado de PII -------------------------------------------
+
+
+def _model_conversation(context):
+    """Devuelve como texto todo lo que recibió el modelo que graba.
+
+    :param context: Estado del escenario, con ``model``
+    :type context: dict
+    :return: Las llamadas al modelo en JSON, sin escapar acentos
+    :rtype: str
+    """
+    assert context["model"].calls
+    return json.dumps(context["model"].calls, ensure_ascii=False)
+
+
+def _counts_in(value):
+    """Junta los diccionarios de conteos que haya dentro de un evento del log.
+
+    :param value: Valor de un campo del evento
+    :type value: object
+    :return: Diccionarios ``tipo -> conteo`` encontrados
+    :rtype: list[dict]
+    """
+    if not isinstance(value, dict):
+        return []
+    found = [value] if value and all(
+        isinstance(count, int) for count in value.values()
+    ) else []
+    for nested in value.values():
+        found.extend(_counts_in(nested))
+    return found
+
+
+@given(
+    parsers.re(
+        "the HR assistant runs with a model that answers " + _quoted("answer")
+    )
+)
+def answering_assistant(context, build_client, answer):
+    """Arranca la API con un modelo que siempre da la misma respuesta."""
+    model = ScriptedModel([(json.dumps({"answer": answer}), 1, 1)])
+    context["model"] = model
+    context["client"] = build_client(None, model)
+
+
+@then(parsers.re("the model never received " + _quoted("text")))
+def model_never_received(context, text):
+    """Revisa que el texto no aparezca en nada de lo que recibió el modelo."""
+    assert text not in _model_conversation(context)
+
+
+@then(parsers.re("the model received a message containing " + _quoted("text")))
+def model_received_text(context, text):
+    """Revisa que el texto aparezca en lo que recibió el modelo."""
+    assert text in _model_conversation(context)
+
+
+@then(
+    parsers.re(r"the log records (?P<count>\d+) masked " + _quoted("kind"))
+)
+def log_records_masked_count(context, count, kind):
+    """Revisa que algún evento del log cuente lo enmascarado de ese tipo.
+
+    No depende del nombre del evento ni del campo: busca un diccionario de
+    conteos ``tipo -> número`` en cualquier evento.
+    """
+    _, events = _log_lines(context)
+    counts = [found for event in events for found in _counts_in(event)]
+    assert any(found.get(kind) == int(count) for found in counts)

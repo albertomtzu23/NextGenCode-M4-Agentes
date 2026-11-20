@@ -20,3 +20,15 @@ completos. LangSmith se importa solo si `LANGSMITH_TRACING=true` y hay clave.
 - Las pruebas fijan el reloj y capturan el log en memoria.
 - Los eventos de costo de la sesión 3 (`model`, `route`, `cost_usd`) se agregan a `agent_run` sin cambiar el
   formato.
+
+## Actualización (ADR 0012)
+
+El evento `audit` ya no es solo "uno por cada herramienta que llama el agente" (`spec/02-observability.md`). Ahora
+tiene dos valores de `action`:
+
+- `tool_call`: uno por herramienta, con `tool` y `args`, como antes.
+- `pii_masked`: como máximo uno por petición, solo si se enmascaró algo, con `input` y `output` (diccionarios de
+  tipo de PII a conteo, sin valores). Lo emite `_log_pii` en `main.py`.
+
+Ambos llevan `client` y `request_id`. Quien cuente llamadas a herramientas debe filtrar por `action: "tool_call"`. Se
+mantiene la regla de este ADR: el log guarda conteos, nunca textos ni valores.
