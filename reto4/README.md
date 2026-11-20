@@ -62,7 +62,7 @@ El detalle está en [`hr-assistant/doc/architecture.md`](hr-assistant/doc/archit
 | Arquitectura y despliegue | Docker con usuario no root, Blueprint de Render, CI por etapas, `/health`, `/docs`, prueba de humo 3/3 en producción | [arquitectura](hr-assistant/doc/architecture.md) |
 | Observabilidad | LangSmith, log JSON con `request_id` y `client`, eventos `request`, `agent_run`, `audit` y `error`, `/metrics` con latencia, errores, tokens y costo | [observability.md](doc/observability.md) |
 | Costos | Enrutador de modelo, ventana de historial, tope de tokens y caché del gateway; 87 % menos frente a la línea base | [cost-analysis.md](doc/cost-analysis.md) |
-| Seguridad | Clave por cliente, límite de peticiones, validación de entradas y salidas, secretos fuera del código, auditoría, trazas sin datos, compliance al arrancar, mínimo privilegio | [security.md](doc/security.md) |
+| Seguridad | Clave por cliente, límite de peticiones, validación de entradas y salidas, secretos fuera del código, auditoría, detección y enmascarado de PII, trazas sin datos, compliance al arrancar, mínimo privilegio | [security.md](doc/security.md) |
 
 ## Instalación y ejecución
 
@@ -138,9 +138,8 @@ Estas son las limitaciones actuales y la mejora planeada para cada una:
 
 - **Límite de peticiones y métricas en memoria.** Cada proceso lleva las suyas (ADR 0010), así que con varias
   instancias el límite es por instancia. La mejora es moverlos a Redis.
-- **Sin detección de PII basada en modelo.** La protección actual es estructural: herramientas de solo lectura,
-  trazas con `HIDE_INPUTS` y `HIDE_OUTPUTS`, y logs que guardan solo el largo de la pregunta. Falta un detector
-  de PII sobre la pregunta y la respuesta, como Presidio o expresiones para RFC, CURP, correo y teléfono.
+- **La PII se detecta por expresión regular.** Cubre correo, CURP, RFC, tarjeta, NSS y teléfono, pero no los
+  nombres propios. Para eso haría falta un detector por modelo, como Presidio.
 - **Sin reintento ni modelo de respaldo.** Si el gateway falla, la API responde 502 "model unavailable" y lo
   registra. Falta agregar reintento con backoff y caer al modelo pequeño.
 - **Dependencias de desarrollo en la imagen.** La imagen instala también pytest y playwright. La mejora es

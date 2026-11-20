@@ -130,3 +130,20 @@ def test_client_is_logged_in_request_audit_and_agent_run(build_client, capsys):
     for name in ("request", "audit", "agent_run"):
         assert by_event[name]["client"] == TEST_CLIENT
     assert TEST_API_KEY not in output
+
+
+def test_pii_is_masked_before_the_model_and_in_the_answer(build_client):
+    reply = (json.dumps({"answer": "Su RFC es LOPA800101AB1"}), 1, 1)
+    model = ScriptedModel([reply])
+    client = build_client(None, model)
+    history = [{"role": "user", "content": "Mi tel es 55 1234 5678"}]
+
+    response = client.post(
+        "/ask", json={"question": "Escribe a ana@empresa.com", "history": history}
+    )
+
+    sent = json.dumps(model.calls[0], ensure_ascii=False)
+    assert "ana@empresa.com" not in sent
+    assert "55 1234 5678" not in sent
+    assert "[email oculto]" in sent
+    assert response.json()["answer"] == "Su RFC es [rfc oculto]"

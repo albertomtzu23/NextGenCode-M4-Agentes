@@ -15,19 +15,28 @@ por requisito del reto.
 | 7 | Protección de información sensible | La pregunta no se guarda en los logs, solo su largo. En producción, las trazas de LangSmith llevan obligatoriamente `HIDE_INPUTS` y `HIDE_OUTPUTS`. Las claves nunca se registran | `app/observability.py`, `app/compliance.py` |
 | 8 | Mínimo privilegio | Las herramientas del agente son de solo lectura (`get_employee`, `search_by_department`). El contenedor corre con el usuario `appuser`, que no es root. El token de Cloudflare solo tiene permiso de Workers AI. En la fábrica, cada subagente tiene sus herramientas restringidas y un hook bloquea la lectura de `.env` | `app/directory.py`, `Dockerfile`, `.claude/` |
 | 9 | Compliance al arrancar | Con `ENVIRONMENT=production`, el servicio no arranca si usa el modelo simulado, si no tiene claves, si una clave tiene menos de 16 caracteres o si las trazas no ocultan datos | `app/compliance.py` |
+| 11 | Detección de PII | Correo, CURP, RFC, tarjeta, NSS y teléfono se enmascaran en la entrada y en la salida, con su evento de auditoría | `app/pii.py`, `app/main.py` |
 | 10 | Errores sin filtrar detalles | Si el proveedor falla, la API responde 502 "model unavailable" y solo registra el tipo de error, nunca el cuerpo ni el token | `app/main.py`, `app/llm.py` |
 
 ## Detección de PII
 
-La protección actual es estructural:
+`app/pii.py` detecta y enmascara seis tipos de dato: correo, CURP, RFC, tarjeta, NSS y teléfono. El enmascarado
+se aplica en tres puntos:
 
-- El agente solo puede leer el directorio. No escribe ni consulta nada fuera de él.
-- El texto de la pregunta y el de la respuesta no queda ni en el log ni en la traza.
-- Solo los clientes autenticados pueden preguntar.
+- **Pregunta e historial**, antes de llamar al modelo: el dato no llega a Cloudflare ni a LangSmith.
+- **Respuesta**, antes de devolverla: el modelo no puede filtrar un dato aunque lo invente o lo repita.
+- **Auditoría:** cuando hay coincidencias, se registra un evento `audit` con `action: "pii_masked"` y el conteo
+  por tipo, por ejemplo `{"input": {"email": 1}, "output": {"rfc": 1}}`. Nunca se guarda el valor.
 
-Falta un detector que revise el contenido de la pregunta y de la respuesta y enmascare datos como RFC, CURP,
-correo, teléfono o tarjeta antes de llamar al modelo. Está planeado como la siguiente mejora, con expresiones
-regulares en `app/pii.py` y un evento `pii_detected` en la auditoría.
+Cada dato se reemplaza por una marca como `[email oculto]`. Las pruebas están en `tests/test_pii.py`, una por
+tipo, y en `tests/test_api.py`, que comprueba de punta a punta que el modelo no recibe el dato y que la respuesta
+sale enmascarada.
+
+Además está la protección estructural: herramientas de solo lectura, logs que solo guardan el largo de la
+pregunta y trazas con `HIDE_INPUTS` y `HIDE_OUTPUTS`.
+
+Una limitación: los nombres propios no se detectan por expresión regular. Para eso haría falta un detector por
+modelo, como Presidio.
 
 ## Modelo de amenazas resumido
 

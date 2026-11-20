@@ -19,6 +19,7 @@ from app.config import ConfigError, load_config
 from app.directory import load_directory
 from app.llm import ModelUnavailableError, build_models
 from app.observability import build_observability
+from app.pii import mask_pii
 from app.pricing import load_prices
 from app.ratelimit import RateLimiter
 from app.router import choose_model
@@ -188,6 +189,27 @@ def _log_run(  # pylint: disable=too-many-arguments
     )
 
 
+def _log_pii(logger, request_id, client, found, answer_found):
+    """Registra en la auditoría los tipos de PII enmascarados, sin valores.
+
+    :param logger: Logger de eventos JSON
+    :type logger: app.observability.JsonLogger
+    :param request_id: Id de la petición
+    :type request_id: str
+    :param client: Nombre del cliente
+    :type client: str
+    :param found: Tipos encontrados en la pregunta y el historial
+    :type found: collections.Counter
+    :param answer_found: Tipos encontrados en la respuesta
+    :type answer_found: collections.Counter
+    """
+    if found or answer_found:
+        logger.log(
+            "audit", request_id, client=client, action="pii_masked",
+            input=dict(found), output=dict(answer_found),
+        )
+
+
 def _add_middleware(application, observability):
     """Agrega el middleware de ``X-Request-ID``, del evento ``request`` y del 500.
 
@@ -295,8 +317,15 @@ def create_app(  # pylint: disable=too-many-arguments
             prices=prices, history_window=config.history_window,
             tracer=observability.tracer, request_id=request_id, client=client,
         )
-        history = [message.model_dump() for message in request.history]
-        result = agent.run(request.question, history)
+        question, found = mask_pii(request.question)
+        history = []
+        for message in request.history:
+            content, history_found = mask_pii(message.content)
+            found += history_found
+            history.append({"role": message.role, "content": content})
+        result = agent.run(question, history)
+        result.answer, answer_found = mask_pii(result.answer)
+        _log_pii(observability.logger, request_id, client, found, answer_found)
         _log_run(
             observability.logger, request_id, request, result, route,
             client=client,
