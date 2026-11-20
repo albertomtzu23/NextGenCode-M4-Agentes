@@ -20,6 +20,8 @@ def test_cost_uses_the_price_per_million_tokens(prices):
 
 def test_product_prices_are_an_exact_copy_of_the_spec_prices():
     spec_prices = PRODUCT_ROOT.parent / "spec" / "model_prices.json"
+    if not spec_prices.exists():
+        pytest.skip("la especificación solo existe dentro de la fábrica")
 
     product = json.loads(PRICES_PATH.read_text(encoding="utf-8"))
     spec = json.loads(spec_prices.read_text(encoding="utf-8"))
